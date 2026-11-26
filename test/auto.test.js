@@ -123,6 +123,14 @@ test('un grupo ya analizado se publica con su borrador sin volver a consultar', 
   assert.equal(store.publicView(codigo).respuestas.length, 1);
 });
 
+test('un grupo analizado sin clasificar (versión anterior) se vuelve a consultar', async () => {
+  const { store, codigo, ids, calls, advance, states } = setup(['a']);
+  store.applyAnalysis(codigo, [{ ids, resumen: 'A', sugerencia: 'borrador antiguo' }]);
+  await advance(WAIT_MS);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(states(), ['publicada']);
+});
+
 test('una respuesta rápida reabierta no se vuelve a publicar sola', async () => {
   const { store, codigo, ids, advance, states } = setup();
   await advance(WAIT_MS);

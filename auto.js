@@ -33,14 +33,16 @@ export function createAutoAnswer({ store, analyze, now = Date.now }) {
     const due = clase.preguntas.filter((p) => ready(clase, p));
 
     // Groups the teacher already analysed carry a draft, so they need no new AI call.
-    const drafted = new Map(due.filter((p) => p.grupo).map((p) => [p.grupo.id, p.grupo]));
+    // Those saved by an earlier version were never classified, so they are asked again.
+    const classified = (p) => typeof p.grupo?.tecnica === 'boolean';
+    const drafted = new Map(due.filter(classified).map((p) => [p.grupo.id, p.grupo]));
     for (const group of drafted.values()) {
       const members = clase.preguntas.filter((p) => p.grupo?.id === group.id).map((p) => p.id);
       const waiting = (c, p) => dueAt(c, p, now()) !== null;
       resolve(codigo, stillWaiting(codigo, members, waiting), group);
     }
 
-    const loose = due.filter((p) => !p.grupo);
+    const loose = due.filter((p) => !classified(p));
     if (!loose.length || now() < notBefore) return;
     notBefore = now() + GAP_MS;
     let groups;
