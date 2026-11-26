@@ -1,0 +1,13 @@
+# Secretos: clave de Gemini
+.env
+.env.*
+!.env.example
+
+# Datos de clases (nombres y preguntas de estudiantes) y clave del panel
+data/
+*.csv
+
+node_modules/
+*.log
+*.tmp
+~$*

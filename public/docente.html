@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel del docente</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: light-dark(#eef2ef, #101714);
+    --surface: light-dark(#ffffff, #1a2420);
+    --ink: light-dark(#17211d, #e8eee9);
+    --muted: light-dark(#55645d, #a3b3aa);
+    --line: light-dark(#c9d3cd, #34443d);
+    --board: light-dark(#1f5c4a, #2f7d66);
+    --chalk: light-dark(#8a5a00, #f2c14e);
+    --danger: light-dark(#a8362a, #ff9d8f);
+  }
+  body { font: 1rem/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); max-width: 50rem; margin: 0 auto; padding: 1rem 1rem 4rem; }
+  h1, h2, h3, p, ul { margin: 0; }
+  h1 { font-size: 1.25rem; }
+  h2 { font-size: 1.5rem; }
+  h3 { font: 600 1.3rem/1.3 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+  header, .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+  header, .heading { justify-content: space-between; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; padding: 1rem; margin-top: 1rem; }
+  label { font-weight: 600; }
+  input, textarea, select, button { font: inherit; color: inherit; box-sizing: border-box; padding: .55rem .75rem; border-radius: .45rem; border: 1px solid var(--line); background: var(--surface); }
+  textarea, article input, #enlace { width: 100%; }
+  textarea { resize: vertical; }
+  .grow { flex: 1 1 14rem; min-width: 0; }
+  button { cursor: pointer; font-weight: 600; }
+  button.primary { background: var(--board); border-color: var(--board); color: #fff; }
+  button.quiet { border-color: transparent; background: transparent; color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  summary { cursor: pointer; font-weight: 600; }
+  :focus-visible { outline: 3px solid #f2a900; outline-offset: 2px; }
+  #estado { font-weight: 600; color: var(--chalk); }
+  #estado.ready { color: light-dark(#1f5c4a, #7fd3b6); }
+  #estado::before { content: "● "; }
+  #aviso { min-height: 1.5rem; margin-top: .75rem; font-weight: 600; }
+  .heading { margin: 1rem 0 .75rem; }
+  .empty { color: var(--muted); padding: 1.5rem 0; }
+  article.question { display: grid; grid-template-columns: 4.5rem 1fr; overflow: hidden; padding: 0; }
+  .count { background: var(--board); color: #fff; text-align: center; padding: 1rem .25rem; font-size: .8rem; line-height: 1.2; }
+  .count strong { display: block; font-size: 2.25rem; line-height: 1; margin-bottom: .25rem; }
+  .body { padding: 1rem; min-width: 0; display: grid; gap: .6rem; overflow-wrap: anywhere; }
+  .body ul { padding-left: 1.1rem; color: var(--muted); }
+  .who { color: var(--muted); }
+  .draft { color: var(--chalk); font-weight: 600; }
+  details > div { margin-top: .5rem; }
+  .handled article { border-top: 1px solid var(--line); padding: .75rem 0; overflow-wrap: anywhere; }
+  .handled p { white-space: pre-wrap; margin: .25rem 0; }
+  @media (max-width: 30rem) {
+    article.question { grid-template-columns: 1fr; }
+    .count { text-align: left; padding: .5rem 1rem; }
+    .count strong { display: inline; font-size: 1.25rem; margin-right: .35rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Panel del docente</h1>
+  <span id="estado" hidden></span>
+</header>
+
+<main>
+  <section class="panel" aria-label="Clase e invitación">
+    <form id="nueva" class="row">
+      <label for="titulo">Nueva clase</label>
+      <input id="titulo" class="grow" maxlength="120" placeholder="Tema (opcional)">
+      <button>Crear clase</button>
+    </form>
+    <div id="invitacion" hidden>
+      <div class="row" style="margin-top: .75rem">
+        <label for="clases">Clase actual</label>
+        <select id="clases" class="grow"></select>
+      </div>
+      <div class="row" style="margin-top: .75rem">
+        <input id="enlace" class="grow" readonly aria-label="Enlace de la clase">
+        <button type="button" id="copiar" class="primary" disabled>Copiar invitación</button>
+      </div>
+    </div>
+  </section>
+
+  <p id="aviso" role="status"></p>
+
+  <div id="clase" hidden>
+    <div class="row heading">
+      <h2>Pendientes (<span id="total">0</span>)</h2>
+      <button type="button" id="analizar" class="primary" disabled>Analizar preguntas</button>
+    </div>
+    <p id="vacio" class="empty">No hay preguntas pendientes. Pega la invitación en el chat de Zoom.</p>
+    <div id="pendientes"></div>
+
+    <details class="panel handled">
+      <summary>Atendidas (<span id="hechas">0</span>)</summary>
+      <div id="atendidas"></div>
+    </details>
+    <div class="row heading">
+      <button type="button" id="exportar">Exportar CSV</button>
+    </div>
+  </div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  // The key leaves the address bar at once, so it is not visible while sharing the screen.
+  if (location.hash.length > 1) {
+    localStorage.setItem('clave', location.hash.slice(1));
+    history.replaceState(null, '', location.pathname);
+  }
+  const key = localStorage.getItem('clave') ?? '';
+
+  const cards = new Map();   // card key -> { element, signature }
+  const drafts = new Map();  // question id -> text typed but not published
+  let current = null;
+  let title = '';
+  let handled = '';
+
+  function el(tag, props, ...children) {
+    const node = Object.assign(document.createElement(tag), props);
+    node.append(...children);
+    return node;
+  }
+  const say = (message) => { $('aviso').textContent = message; };
+
+  async function request(path, body) {
+    const response = await fetch(`/api/docente/clases${path}`, {
+      method: body ? 'POST' : 'GET',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: body && JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'No se pudo conectar.');
+    }
+    return response;
+  }
+  const api = async (path, body) => (await request(path, body)).json();
+
+  async function run(button, task) {
+    button.disabled = true;
+    try {
+      await task();
+    } catch (error) {
+      say(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function setState(ids, estado, extra = {}) {
+    await api(`/${current}/preguntas`, { ids, estado, ...extra });
+    if (estado === 'publicada') for (const id of ids) drafts.delete(id);
+    say({ publicada: 'Respuesta publicada.', oral: 'Marcada como respondida en voz alta.', descartada: 'Descartada.', pendiente: 'Reabierta.' }[estado]);
+    await refresh();
+  }
+
+  const questionLine = (q) => el('li', { textContent: q.nombre ? `${q.texto} (${q.nombre})` : q.texto });
+
+  function actionButton(text, className, task) {
+    const button = el('button', { type: 'button', textContent: text, className });
+    button.addEventListener('click', () => run(button, task));
+    return button;
+  }
+
+  function pendingCard(cardKey, questions) {
+    const ids = questions.map((q) => q.id);
+    const group = questions[0].grupo;
+    const draft = ids.map((id) => drafts.get(id)).find(Boolean);
+    const heading = group?.resumen ?? questions[0].texto;
+    const statement = el('input', { id: `e-${cardKey}`, maxLength: 500, value: draft?.enunciado ?? heading });
+    const answer = el('textarea', { id: `r-${cardKey}`, rows: group ? 4 : 2, maxLength: 3000, value: draft?.respuesta ?? group?.sugerencia ?? '' });
+    const publish = actionButton('Publicar respuesta', 'primary', () => setState(ids, 'publicada', { enunciado: statement.value, respuesta: answer.value }));
+    const check = () => { publish.disabled = !answer.value.trim() || !statement.value.trim(); };
+    const remember = () => {
+      drafts.set(ids[0], { enunciado: statement.value, respuesta: answer.value });
+      check();
+    };
+    statement.addEventListener('input', remember);
+    answer.addEventListener('input', remember);
+    check();
+
+    // A lone, ungrouped question is already the heading; only the name is added.
+    const originals = group || questions.length > 1
+      ? [el('ul', {}, ...questions.map(questionLine))]
+      : questions[0].nombre ? [el('p', { className: 'who', textContent: `De ${questions[0].nombre}` })] : [];
+
+    return el('article', { className: 'panel question' },
+      el('div', { className: 'count' },
+        el('strong', { textContent: questions.length }),
+        questions.length === 1 ? 'pregunta' : 'preguntas'),
+      el('div', { className: 'body' },
+        el('h3', { textContent: heading }),
+        ...originals,
+        el('label', { htmlFor: answer.id, textContent: 'Tu respuesta' }),
+        ...(group ? [el('p', { className: 'draft', textContent: 'Borrador de IA: revísalo antes de publicar.' })] : []),
+        answer,
+        el('details', {},
+          el('summary', { textContent: 'Cambiar la pregunta que verán los estudiantes' }),
+          el('div', {}, el('label', { htmlFor: statement.id, textContent: 'Pregunta visible' }), statement)),
+        el('div', { className: 'row' },
+          publish,
+          actionButton('Respondida en voz alta', '', () => setState(ids, 'oral')),
+          actionButton('Descartar', 'quiet', () => setState(ids, 'descartada')))));
+  }
+
+  function renderPending(questions) {
+    const groups = new Map();
+    for (const q of questions) {
+      const cardKey = q.grupo?.id ?? q.id;
+      groups.set(cardKey, [...(groups.get(cardKey) ?? []), q]);
+    }
+    for (const [cardKey, card] of cards) {
+      if (!groups.has(cardKey)) {
+        card.element.remove();
+        cards.delete(cardKey);
+      }
+    }
+    // Existing cards are never moved, so typing is not interrupted when new questions arrive.
+    for (const [cardKey, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
+      const signature = list.map((q) => q.id).join();
+      const card = cards.get(cardKey);
+      if (card?.signature === signature) continue;
+      const element = pendingCard(cardKey, list);
+      if (card) card.element.replaceWith(element);
+      else $('pendientes').append(element);
+      cards.set(cardKey, { element, signature });
+    }
+    $('total').textContent = questions.length;
+    $('vacio').hidden = questions.length > 0;
+    // The count stays visible in the browser tab while Zoom covers the panel.
+    document.title = questions.length ? `(${questions.length}) Panel del docente` : 'Panel del docente';
+  }
+
+  function renderHandled(questions) {
+    $('hechas').textContent = questions.length;
+    const signature = JSON.stringify(questions.map((q) => [q.id, q.estado, q.publicacion?.id]));
+    if (signature === handled) return;
+    handled = signature;
+    const labels = { publicada: 'Publicada', oral: 'Respondida en voz alta', descartada: 'Descartada' };
+    $('atendidas').replaceChildren(...[...questions].reverse().map((q) => el('article', {},
+      el('strong', { textContent: labels[q.estado] }),
+      el('ul', {}, questionLine(q)),
+      ...(q.publicacion ? [el('p', { textContent: `${q.publicacion.enunciado}\n${q.publicacion.respuesta}` })] : []),
+      actionButton('Reabrir', '', () => setState([q.id], 'pendiente')))));
+  }
+
+  async function refresh() {
+    const code = current;
+    if (!code) return;
+    const data = await api(`/${code}`);
+    if (code !== current) return;
+    title = data.titulo;
+    const ready = Boolean(data.enlace);
+    $('enlace').value = data.enlace ?? `${location.origin}/?c=${code}`;
+    // Only a public link can be shared, so the invitation waits for it.
+    $('copiar').disabled = !ready;
+    $('estado').hidden = false;
+    $('estado').className = ready ? 'ready' : '';
+    $('estado').textContent = ready ? 'Enlace público listo' : 'Preparando el enlace público. Si tarda, revisa la ventana negra.';
+    const pending = data.preguntas.filter((q) => q.estado === 'pendiente');
+    renderPending(pending);
+    renderHandled(data.preguntas.filter((q) => q.estado !== 'pendiente'));
+    if (!analyzing) $('analizar').disabled = !pending.length;
+  }
+
+  function open(code) {
+    current = code;
+    cards.clear();
+    handled = '';
+    $('pendientes').replaceChildren();
+    $('atendidas').replaceChildren();
+    $('clase').hidden = !code;
+    $('invitacion').hidden = !code;
+    return refresh();
+  }
+
+  async function loadClasses(selected) {
+    const { clases } = await api('');
+    $('clases').replaceChildren(...[...clases].reverse().map((c) =>
+      el('option', { value: c.codigo, textContent: `${c.titulo} (${new Date(c.creada).toLocaleDateString('es')})` })));
+    const code = selected ?? clases.at(-1)?.codigo ?? null;
+    if (code) $('clases').value = code;
+    else say('Crea tu primera clase. Puedes dejar el tema vacío.');
+    await open(code);
+  }
+
+  $('nueva').addEventListener('submit', (event) => {
+    event.preventDefault();
+    run(event.target.querySelector('button'), async () => {
+      const titulo = $('titulo').value.trim() || `Clase del ${new Date().toLocaleDateString('es', { day: 'numeric', month: 'long' })}`;
+      const { codigo } = await api('', { titulo });
+      $('titulo').value = '';
+      say('Clase creada. Copia la invitación y pégala en el chat de Zoom.');
+      await loadClasses(codigo);
+    });
+  });
+
+  $('clases').addEventListener('change', () => open($('clases').value).catch((error) => say(error.message)));
+
+  $('copiar').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(`Envía tus preguntas de «${title}» aquí: ${$('enlace').value}`);
+      say('Invitación copiada. Pégala en el chat de Zoom.');
+    } catch {
+      say('No se pudo copiar. Selecciona el enlace y cópialo a mano.');
+    }
+  });
+
+  let analyzing = false;
+  $('analizar').addEventListener('click', async () => {
+    analyzing = true;
+    $('analizar').disabled = true;
+    say('Analizando…');
+    try {
+      const { grupos } = await api(`/${current}/analizar`, {});
+      say(grupos ? `Análisis listo: ${grupos} grupo(s).` : 'No se formó ningún grupo.');
+    } catch (error) {
+      say(error.message);
+    }
+    analyzing = false;
+    await refresh().catch((error) => say(error.message));
+  });
+
+  $('exportar').addEventListener('click', () => run($('exportar'), async () => {
+    const blob = await (await request(`/${current}/csv`)).blob();
+    const link = el('a', { href: URL.createObjectURL(blob), download: `clase-${current}.csv` });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }));
+
+  // Unlike the student page, this keeps polling when hidden: Zoom usually covers it.
+  // shortcut: browsers may slow a long-hidden tab to one refresh a minute; push updates need a fixed tunnel.
+  async function poll() {
+    try {
+      await refresh();
+    } catch (error) {
+      say(error.message);
+      $('estado').className = '';
+      $('estado').textContent = 'Sin conexión con la app';
+    }
+    setTimeout(poll, 3000);
+  }
+
+  loadClasses().catch((error) => say(error.message)).finally(poll);
+</script>
+</body>
+</html>

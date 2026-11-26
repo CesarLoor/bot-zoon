@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preguntas de la clase</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 1rem/1.5 system-ui, sans-serif; max-width: 36rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  label { display: block; font-weight: 600; margin-top: .75rem; }
+  textarea, input, button { font: inherit; box-sizing: border-box; padding: .6rem; border-radius: .4rem; }
+  textarea, input { width: 100%; border: 1px solid #888; }
+  button { margin-top: .75rem; width: 100%; border: 0; background: #1459c7; color: #fff; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; }
+  :focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+  article { border: 1px solid #8886; border-radius: .5rem; padding: .75rem; margin-bottom: .75rem; }
+  article p, article h3 { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  article h3 { font-size: 1rem; margin-bottom: .35rem; }
+  small { display: block; margin-top: .5rem; opacity: .8; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="titulo">Preguntas de la clase</h1>
+  <form id="form">
+    <label for="texto">Tu pregunta</label>
+    <textarea id="texto" rows="4" maxlength="500" required></textarea>
+    <label for="nombre">Tu nombre (opcional)</label>
+    <input id="nombre" maxlength="60" autocomplete="given-name">
+    <button>Enviar pregunta</button>
+    <small>No escribas datos personales en tu pregunta. Puede procesarse con Google Gemini.</small>
+  </form>
+  <p id="aviso" role="status"></p>
+  <p id="conexion" role="status"></p>
+  <h2>Respuestas del docente</h2>
+  <div id="respuestas" aria-live="polite"><p>Todavía no hay respuestas.</p></div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const code = new URLSearchParams(location.search).get('c');
+  const url = `/api/clase/${encodeURIComponent(code)}`;
+  let shown = '[]';
+
+  async function api(path, options) {
+    const response = await fetch(path, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'No se pudo conectar.');
+    return data;
+  }
+
+  async function refresh() {
+    try {
+      const { titulo, respuestas } = await api(url);
+      $('titulo').textContent = titulo;
+      $('conexion').textContent = '';
+      const next = JSON.stringify(respuestas);
+      if (next === shown) return;
+      shown = next;
+      const items = [...respuestas].reverse().map(({ enunciado, respuesta }) => {
+        const article = document.createElement('article');
+        const heading = document.createElement('h3');
+        const body = document.createElement('p');
+        heading.textContent = enunciado;
+        body.textContent = respuesta;
+        article.append(heading, body);
+        return article;
+      });
+      if (items.length) $('respuestas').replaceChildren(...items);
+      else $('respuestas').textContent = 'Todavía no hay respuestas.';
+    } catch (error) {
+      $('conexion').textContent = `${error.message} Reintentando…`;
+    }
+  }
+
+  async function poll() {
+    if (!document.hidden) await refresh();
+    setTimeout(poll, 3000);
+  }
+
+  $('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = event.target.querySelector('button');
+    button.disabled = true;
+    $('aviso').textContent = 'Enviando…';
+    try {
+      await api(`${url}/preguntas`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ texto: $('texto').value, nombre: $('nombre').value }),
+      });
+      $('texto').value = '';
+      $('aviso').textContent = 'Pregunta enviada.';
+    } catch (error) {
+      // The text stays in the box so the student can retry.
+      $('aviso').textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  if (code) poll();
+  else {
+    $('form').hidden = true;
+    $('aviso').textContent = 'Pide a tu docente el enlace de la clase.';
+  }
+</script>
+</body>
+</html>
