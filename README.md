@@ -8,6 +8,8 @@ Funciona con una cuenta gratuita de Zoom: no usa la API de Zoom.
 
 Manual de usuario (formato APA 7): [PDF](manual/Manual_de_usuario.pdf) · [Word](manual/Manual_de_usuario.docx)
 
+Para desarrolladores: [arquitectura, API, datos y cómo contribuir](docs/DESARROLLO.md)
+
 ![Flujo de uso del docente y del estudiante](manual/capturas/00-flujo.png)
 
 ![Panel del docente con un grupo de preguntas y su borrador de respuesta](manual/capturas/06-analisis.png)
