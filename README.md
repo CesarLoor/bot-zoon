@@ -1,6 +1,6 @@
 # Preguntas en vivo para clases por Zoom
 
-Los estudiantes envían preguntas desde un enlace pegado en el chat de Zoom. El docente las ve en un panel, las agrupa con ayuda de Gemini y decide qué responder. La IA no publica nada por sí sola.
+Los estudiantes envían preguntas desde un enlace pegado en el chat de Zoom. El docente las ve en un panel, las agrupa con ayuda de Gemini y decide qué responder. La IA solo publica por sí sola si el docente activa la **respuesta rápida**.
 
 Funciona con una cuenta gratuita de Zoom: no usa la API de Zoom.
 
@@ -19,6 +19,7 @@ Manual de usuario (formato APA 7): [PDF](manual/Manual_de_usuario.pdf) · [Word]
 | `server.js` | Servidor, API y túnel público |
 | `store.js` | Clases, preguntas, persistencia y exportación CSV |
 | `gemini.js` | Agrupación y borradores con Gemini |
+| `auto.js` | Respuesta rápida a los 2 minutos |
 | `public/` | Página del estudiante y panel del docente |
 | `test/` | Pruebas automáticas |
 
@@ -43,6 +44,16 @@ Manual de usuario (formato APA 7): [PDF](manual/Manual_de_usuario.pdf) · [Word]
 El enlace del panel (`/docente#…`) da control total: no lo compartas. Desde una terminal también funciona `npm start`.
 
 Si compartes pantalla, recuerda que el panel muestra nombres y preguntas pendientes.
+
+## Respuesta rápida
+
+Se activa por clase con la casilla del panel y empieza apagada. Si una pregunta **técnica** sigue pendiente 2 minutos, la IA publica una respuesta con la etiqueta **Respuesta rápida**.
+
+- **Yo respondo** detiene la cuenta; escribir en la tarjeta la reinicia.
+- Las preguntas sobre fechas, notas, tareas o exámenes quedan para el docente.
+- En **Atendidas**, **Corregir o retirar** quita la respuesta y deja su texto listo para editar.
+- Se publica **sin revisión**: puede tener errores, la IA puede clasificar mal una pregunta y un estudiante podría redactarla para manipularla.
+- La app debe estar abierta. No responde preguntas de hace más de 30 minutos y deja al menos 20 segundos entre consultas a Gemini.
 
 ## Ten en cuenta
 
