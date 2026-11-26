@@ -30,11 +30,11 @@
     <label for="nombre">Tu nombre (opcional)</label>
     <input id="nombre" maxlength="60" autocomplete="given-name">
     <button>Enviar pregunta</button>
-    <small>No escribas datos personales en tu pregunta. Puede procesarse con Google Gemini.</small>
+    <small>No escribas datos personales en tu pregunta. Puede procesarse con Google Gemini, y si tu docente no alcanza a responder, una IA puede publicar una respuesta rápida.</small>
   </form>
   <p id="aviso" role="status"></p>
   <p id="conexion" role="status"></p>
-  <h2>Respuestas del docente</h2>
+  <h2>Respuestas de la clase</h2>
   <div id="respuestas" aria-live="polite"><p>Todavía no hay respuestas.</p></div>
 </main>
 <script>
@@ -58,13 +58,18 @@
       const next = JSON.stringify(respuestas);
       if (next === shown) return;
       shown = next;
-      const items = [...respuestas].reverse().map(({ enunciado, respuesta }) => {
+      const items = [...respuestas].reverse().map(({ enunciado, respuesta, rapida }) => {
         const article = document.createElement('article');
         const heading = document.createElement('h3');
         const body = document.createElement('p');
         heading.textContent = enunciado;
         body.textContent = respuesta;
         article.append(heading, body);
+        if (rapida) {
+          const tag = document.createElement('small');
+          tag.textContent = 'Respuesta rápida';
+          article.append(tag);
+        }
         return article;
       });
       if (items.length) $('respuestas').replaceChildren(...items);

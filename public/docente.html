@@ -48,6 +48,10 @@
   .body ul { padding-left: 1.1rem; color: var(--muted); }
   .who { color: var(--muted); }
   .draft { color: var(--chalk); font-weight: 600; }
+  .switch { display: flex; gap: .6rem; align-items: center; margin-bottom: .75rem; }
+  .switch input { width: 1.2rem; height: 1.2rem; margin: 0; accent-color: var(--board); flex: none; }
+  .timer { color: var(--chalk); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .timer[hidden] { display: none; }
   details > div { margin-top: .5rem; }
   .handled article { border-top: 1px solid var(--line); padding: .75rem 0; overflow-wrap: anywhere; }
   .handled p { white-space: pre-wrap; margin: .25rem 0; }
@@ -90,6 +94,8 @@
       <h2>Pendientes (<span id="total">0</span>)</h2>
       <button type="button" id="analizar" class="primary" disabled>Analizar preguntas</button>
     </div>
+    <label class="switch"><input type="checkbox" id="auto"> Respuesta rápida a los 2 minutos (solo preguntas técnicas, se publica sin tu revisión)</label>
+    <p id="avisoAuto" class="draft" role="status" hidden></p>
     <p id="vacio" class="empty">No hay preguntas pendientes. Pega la invitación en el chat de Zoom.</p>
     <div id="pendientes"></div>
 
@@ -117,6 +123,8 @@
   let current = null;
   let title = '';
   let handled = '';
+  let autoOn = false;
+  let quick = null;          // quick answers seen in this class; null until the first load
 
   function el(tag, props, ...children) {
     const node = Object.assign(document.createElement(tag), props);
@@ -182,6 +190,24 @@
     answer.addEventListener('input', remember);
     check();
 
+    // While the teacher works on this card, the quick answer countdown starts over.
+    let postponed = 0;
+    const postpone = () => {
+      if (!autoOn || Date.now() - postponed < 5000) return;
+      postponed = Date.now();
+      api(`/${current}/posponer`, { ids }).then(refresh).catch((error) => say(error.message));
+    };
+    for (const field of [statement, answer]) {
+      field.addEventListener('focus', postpone);
+      field.addEventListener('input', postpone);
+    }
+    const timer = el('div', { className: 'row timer', hidden: true },
+      el('span', {}),
+      actionButton('Yo respondo', '', async () => {
+        await api(`/${current}/retener`, { ids });
+        await refresh();
+      }));
+
     // A lone, ungrouped question is already the heading; only the name is added.
     const originals = group || questions.length > 1
       ? [el('ul', {}, ...questions.map(questionLine))]
@@ -194,6 +220,7 @@
       el('div', { className: 'body' },
         el('h3', { textContent: heading }),
         ...originals,
+        timer,
         el('label', { htmlFor: answer.id, textContent: 'Tu respuesta' }),
         ...(group ? [el('p', { className: 'draft', textContent: 'Borrador de IA: revísalo antes de publicar.' })] : []),
         answer,
@@ -204,6 +231,35 @@
           publish,
           actionButton('Respondida en voz alta', '', () => setState(ids, 'oral')),
           actionButton('Descartar', 'quiet', () => setState(ids, 'descartada')))));
+  }
+
+  const HELD = {
+    docente: 'La respondes tú.',
+    'no-tecnica': 'No es técnica: la respondes tú.',
+    'sin-respuesta': 'La IA no tiene respuesta: la respondes tú.',
+  };
+
+  function drawTimer(card) {
+    const box = card.element.querySelector('.timer');
+    const counting = card.deadline !== null;
+    box.hidden = !autoOn || (!counting && !card.note);
+    box.querySelector('button').hidden = !counting;
+    let message = card.note;
+    if (counting) {
+      const seconds = Math.ceil((card.deadline - Date.now()) / 1000);
+      message = seconds > 0
+        ? `Respuesta rápida en ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+        : 'Preparando la respuesta rápida…';
+    }
+    box.querySelector('span').textContent = message ?? '';
+  }
+  setInterval(() => cards.forEach(drawTimer), 1000);
+
+  function updateTimer(card, questions) {
+    const left = questions.map((q) => q.restante).filter((ms) => ms !== null);
+    card.deadline = left.length ? Date.now() + Math.min(...left) : null;
+    card.note = questions.every((q) => q.sinIA) ? HELD[questions[0].sinIA] : null;
+    drawTimer(card);
   }
 
   function renderPending(questions) {
@@ -221,12 +277,15 @@
     // Existing cards are never moved, so typing is not interrupted when new questions arrive.
     for (const [cardKey, list] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
       const signature = list.map((q) => q.id).join();
-      const card = cards.get(cardKey);
-      if (card?.signature === signature) continue;
-      const element = pendingCard(cardKey, list);
-      if (card) card.element.replaceWith(element);
-      else $('pendientes').append(element);
-      cards.set(cardKey, { element, signature });
+      let card = cards.get(cardKey);
+      if (card?.signature !== signature) {
+        const element = pendingCard(cardKey, list);
+        if (card) card.element.replaceWith(element);
+        else $('pendientes').append(element);
+        card = { element, signature };
+        cards.set(cardKey, card);
+      }
+      updateTimer(card, list);
     }
     $('total').textContent = questions.length;
     $('vacio').hidden = questions.length > 0;
@@ -234,17 +293,31 @@
     document.title = questions.length ? `(${questions.length}) Panel del docente` : 'Panel del docente';
   }
 
+  // Reopens a published answer and keeps its text in the card, ready to be corrected.
+  function reopen(question, questions) {
+    const { publicacion } = question;
+    if (publicacion) {
+      for (const q of questions.filter((x) => x.publicacion?.id === publicacion.id)) {
+        drafts.set(q.id, { enunciado: publicacion.enunciado, respuesta: publicacion.respuesta });
+      }
+    }
+    return setState([question.id], 'pendiente');
+  }
+
   function renderHandled(questions) {
     $('hechas').textContent = questions.length;
+    const published = new Set(questions.filter((q) => q.publicacion?.rapida).map((q) => q.publicacion.id)).size;
+    if (quick !== null && published > quick) say('La IA publicó una respuesta rápida. Revísala en Atendidas.');
+    quick = published;
     const signature = JSON.stringify(questions.map((q) => [q.id, q.estado, q.publicacion?.id]));
     if (signature === handled) return;
     handled = signature;
     const labels = { publicada: 'Publicada', oral: 'Respondida en voz alta', descartada: 'Descartada' };
     $('atendidas').replaceChildren(...[...questions].reverse().map((q) => el('article', {},
-      el('strong', { textContent: labels[q.estado] }),
+      el('strong', { textContent: q.publicacion?.rapida ? 'Publicada como respuesta rápida (IA, sin tu revisión)' : labels[q.estado] }),
       el('ul', {}, questionLine(q)),
       ...(q.publicacion ? [el('p', { textContent: `${q.publicacion.enunciado}\n${q.publicacion.respuesta}` })] : []),
-      actionButton('Reabrir', '', () => setState([q.id], 'pendiente')))));
+      actionButton(q.publicacion?.rapida ? 'Corregir o retirar' : 'Reabrir', '', () => reopen(q, questions)))));
   }
 
   async function refresh() {
@@ -260,6 +333,10 @@
     $('estado').hidden = false;
     $('estado').className = ready ? 'ready' : '';
     $('estado').textContent = ready ? 'Enlace público listo' : 'Preparando el enlace público. Si tarda, revisa la ventana negra.';
+    autoOn = Boolean(data.autoDesde);
+    if (!$('auto').disabled) $('auto').checked = autoOn;
+    $('avisoAuto').hidden = !data.avisoAuto;
+    $('avisoAuto').textContent = data.avisoAuto ? `La respuesta rápida no está funcionando: ${data.avisoAuto}` : '';
     const pending = data.preguntas.filter((q) => q.estado === 'pendiente');
     renderPending(pending);
     renderHandled(data.preguntas.filter((q) => q.estado !== 'pendiente'));
@@ -270,6 +347,7 @@
     current = code;
     cards.clear();
     handled = '';
+    quick = null;
     $('pendientes').replaceChildren();
     $('atendidas').replaceChildren();
     $('clase').hidden = !code;
@@ -308,6 +386,12 @@
       say('No se pudo copiar. Selecciona el enlace y cópialo a mano.');
     }
   });
+
+  $('auto').addEventListener('change', () => run($('auto'), async () => {
+    const activo = $('auto').checked;
+    await api(`/${current}/auto`, { activo });
+    say(activo ? 'Respuesta rápida activada en esta clase.' : 'Respuesta rápida desactivada.');
+  }).then(refresh).catch((error) => say(error.message)));
 
   let analyzing = false;
   $('analizar').addEventListener('click', async () => {
