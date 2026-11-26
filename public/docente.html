@@ -215,8 +215,8 @@
 
     return el('article', { className: 'panel question' },
       el('div', { className: 'count' },
-        el('strong', { textContent: questions.length }),
-        questions.length === 1 ? 'pregunta' : 'preguntas'),
+        el('strong'),
+        questions.length > 1 ? `${questions.length} preguntas` : ''),
       el('div', { className: 'body' },
         el('h3', { textContent: heading }),
         ...originals,
@@ -287,6 +287,8 @@
       }
       updateTimer(card, list);
     }
+    // The big number is the card's place in the list, so it is redone when a card leaves.
+    [...$('pendientes').children].forEach((card, i) => { card.querySelector('.count strong').textContent = i + 1; });
     $('total').textContent = questions.length;
     $('vacio').hidden = questions.length > 0;
     // The count stays visible in the browser tab while Zoom covers the panel.
