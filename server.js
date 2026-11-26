@@ -3,8 +3,9 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import { createStore, httpError } from './store.js';
+import { createStore, dueAt, httpError } from './store.js';
 import { analyze as geminiAnalyze } from './gemini.js';
+import { createAutoAnswer } from './auto.js';
 
 const root = import.meta.dirname;
 // Only these files are public; request paths never reach the file system.
@@ -64,6 +65,13 @@ function readBody(req, limit) {
 export function createApp({ store, teacherKey, analyze = geminiAnalyze, publicUrl = () => null, now = Date.now }) {
   const expected = Buffer.from(`Bearer ${teacherKey}`);
   const sends = new Map();
+  const ask = ({ titulo, preguntas }) => analyze({
+    titulo,
+    preguntas,
+    apiKey: process.env.GEMINI_API_KEY,
+    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+  });
+  const auto = createAutoAnswer({ store, analyze: ask, now });
 
   function checkRate(ip) {
     const time = now();
@@ -103,11 +111,32 @@ export function createApp({ store, teacherKey, analyze = geminiAnalyze, publicUr
         if (req.method === 'GET') return send(200, { clases: store.listClasses() });
         if (req.method === 'POST') return send(201, store.createClass((await readBody(req, 4096)).titulo));
       }
-      const [, codigo, action] = pathname.match(/^\/api\/docente\/clases\/([\w-]+)(?:\/(analizar|preguntas|csv))?$/) ?? [];
+      const [, codigo, action] = pathname.match(/^\/api\/docente\/clases\/([\w-]+)(?:\/(analizar|preguntas|csv|auto|posponer|retener))?$/) ?? [];
       if (codigo) {
         if (req.method === 'GET' && !action) {
           const base = publicUrl();
-          return send(200, { ...store.getClass(codigo), enlace: base && `${base}/?c=${codigo}` });
+          const clase = store.getClass(codigo);
+          const time = now();
+          const preguntas = clase.preguntas.map((p) => {
+            const due = dueAt(clase, p, time);
+            return { ...p, restante: due === null ? null : Math.max(0, due - time) };
+          });
+          return send(200, {
+            ...clase, preguntas, enlace: base && `${base}/?c=${codigo}`,
+            avisoAuto: clase.autoDesde ? auto.warning() : null,
+          });
+        }
+        if (req.method === 'POST' && action === 'auto') {
+          const { activo } = await readBody(req, 4096);
+          if (typeof activo !== 'boolean') throw httpError(400, 'Datos no válidos.');
+          store.setAuto(codigo, activo, now());
+          return send(200, { ok: true });
+        }
+        if (req.method === 'POST' && (action === 'posponer' || action === 'retener')) {
+          const { ids } = await readBody(req, 64 * 1024);
+          if (action === 'posponer') store.postpone(codigo, ids, now());
+          else store.hold(codigo, ids, 'docente');
+          return send(200, { ok: true });
         }
         if (req.method === 'GET' && action === 'csv') {
           return send(200, store.toCSV(codigo), 'text/csv', { 'content-disposition': `attachment; filename="clase-${codigo}.csv"` });
@@ -118,12 +147,7 @@ export function createApp({ store, teacherKey, analyze = geminiAnalyze, publicUr
         }
         if (req.method === 'POST' && action === 'analizar') {
           const { titulo, preguntas } = store.getClass(codigo);
-          const grupos = await analyze({
-            titulo,
-            preguntas: preguntas.filter((p) => p.estado === 'pendiente'),
-            apiKey: process.env.GEMINI_API_KEY,
-            model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
-          });
+          const grupos = await ask({ titulo, preguntas: preguntas.filter((p) => p.estado === 'pendiente') });
           store.applyAnalysis(codigo, grupos);
           return send(200, { grupos: grupos.length });
         }
@@ -132,13 +156,15 @@ export function createApp({ store, teacherKey, analyze = geminiAnalyze, publicUr
     throw httpError(404, 'No encontrado.');
   }
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     route(req, res).catch((error) => {
       if (!error.status) console.error(error);
       res.writeHead(error.status ?? 500, { ...SECURITY, 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: error.status ? error.message : 'Error interno. Revisa la consola.' }));
     });
   });
+  server.auto = auto;
+  return server;
 }
 
 function loadTeacherKey(file) {
@@ -199,6 +225,8 @@ if (import.meta.main) {
   });
   app.listen(port, '127.0.0.1', () => {
     console.log(`\nPanel del docente (no lo compartas):\n  ${panel}\n`);
+    // Runs in the server so quick answers work even if the panel is hidden or closed.
+    setInterval(app.auto.tick, 5000);
     if (autoOpen) openBrowser(panel);
     if (process.env.SIN_TUNEL) return;
     startTunnel(port, (url) => {

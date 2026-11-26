@@ -30,7 +30,7 @@ async function start(t, options = {}) {
   };
   const teacher = (method, path, body) => call(method, path, { body, key: KEY });
   const newClass = async () => (await teacher('POST', '/api/docente/clases', { titulo: 'BD' })).data.codigo;
-  return { call, teacher, newClass };
+  return { call, teacher, newClass, server };
 }
 
 test('las rutas del docente exigen la clave', async (t) => {
@@ -82,6 +82,38 @@ test('un error de Gemini llega como aviso y no cambia las preguntas', async (t) 
   const res = await teacher('POST', `/api/docente/clases/${codigo}/analizar`);
   assert.equal(res.status, 429);
   assert.equal(res.data.error, 'Cuota agotada');
+});
+
+test('respuesta rápida: activar, cuenta regresiva, retener y publicar', async (t) => {
+  let clock = Date.now();
+  const analyze = async ({ preguntas }) => preguntas.map((p) => ({ ids: [p.id], resumen: 'R', sugerencia: 'S', tecnica: true }));
+  const { call, teacher, newClass, server } = await start(t, { analyze, now: () => clock });
+  const codigo = await newClass();
+  const path = `/api/docente/clases/${codigo}`;
+  for (const texto of ['uno', 'dos']) await call('POST', `/api/clase/${codigo}/preguntas`, { body: { texto } });
+  for (const action of ['auto', 'posponer', 'retener']) {
+    assert.equal((await call('POST', `${path}/${action}`)).status, 401, action);
+  }
+  let panel = (await teacher('GET', path)).data;
+  assert.equal(panel.preguntas[0].restante, null);
+  clock = Date.now() + 1000;
+  assert.equal((await teacher('POST', `${path}/auto`, { activo: 'si' })).status, 400);
+
+  assert.equal((await teacher('POST', `${path}/auto`, { activo: true })).status, 200);
+  panel = (await teacher('GET', path)).data;
+  assert.ok(panel.autoDesde);
+  assert.equal(panel.preguntas[0].restante, 120_000);
+
+  const [one, two] = panel.preguntas.map((p) => p.id);
+  assert.equal((await teacher('POST', `${path}/retener`, { ids: [one] })).status, 200);
+  clock += 60_000;
+  assert.equal((await teacher('POST', `${path}/posponer`, { ids: [two] })).status, 200);
+  panel = (await teacher('GET', path)).data;
+  assert.deepEqual(panel.preguntas.map((p) => p.restante), [null, 120_000]);
+
+  clock += 120_000;
+  await server.auto.tick();
+  assert.deepEqual((await call('GET', `/api/clase/${codigo}`)).data.respuestas, [{ enunciado: 'R', respuesta: 'S', rapida: true }]);
 });
 
 test('limita a 10 envíos por minuto por IP', async (t) => {
