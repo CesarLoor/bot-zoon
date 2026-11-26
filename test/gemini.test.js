@@ -20,9 +20,10 @@ test('envía las preguntas sin nombres, sin almacenamiento, y devuelve los ids o
   let sent;
   const grupos = await run(async (url, options) => {
     sent = { url, ...options, body: JSON.parse(options.body) };
-    return reply([{ ids: [1, 2], resumen: 'FK', sugerencia: 'Una FK referencia otra tabla.' }]);
+    return reply([{ ids: [1, 2], resumen: 'FK', sugerencia: 'Una FK referencia otra tabla.', tecnica: true }]);
   });
-  assert.deepEqual(grupos, [{ ids: ['uuid-a', 'uuid-b'], resumen: 'FK', sugerencia: 'Una FK referencia otra tabla.' }]);
+  assert.deepEqual(grupos, [{ ids: ['uuid-a', 'uuid-b'], resumen: 'FK', sugerencia: 'Una FK referencia otra tabla.', tecnica: true }]);
+  assert.ok(sent.body.response_format.schema.properties.grupos.items.required.includes('tecnica'));
   assert.equal(sent.url, 'https://generativelanguage.googleapis.com/v1beta/interactions');
   assert.equal(sent.headers['x-goog-api-key'], 'k');
   assert.equal(sent.body.model, 'm');
@@ -41,6 +42,14 @@ test('descarta ids inventados o repetidos y grupos mal formados', async () => {
     null,
   ]));
   assert.deepEqual(grupos.map((g) => g.ids), [['uuid-a'], ['uuid-b']]);
+});
+
+test('solo un true explícito marca una pregunta como técnica', async () => {
+  const grupos = await run(async () => reply([
+    { ids: [1], resumen: 'a', sugerencia: 's', tecnica: 'true' },
+    { ids: [2], resumen: 'b', sugerencia: 's' },
+  ]));
+  assert.deepEqual(grupos.map((g) => g.tecnica), [false, false]);
 });
 
 test('sin preguntas no llama a la API', async () => {
